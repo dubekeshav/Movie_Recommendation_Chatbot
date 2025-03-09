@@ -14,6 +14,7 @@ from constant.WebUrls import urls, soup_strainer_classes
 from State import State
 from langchain_community.vectorstores import Chroma
 from dotenv import load_dotenv
+import fetch_update_omdb
 
 load_dotenv()
 
@@ -100,3 +101,4 @@ def compile_pipeline():
     graph = graph_builder.compile()
     print('Returning graph object')
     return graph
+

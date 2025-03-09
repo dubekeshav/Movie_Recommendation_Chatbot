@@ -1,3 +1,4 @@
 # Ignore all CSV files in the constant folder
 constant/*.csv
 constant/*.tsv
+backend/*_test.py
