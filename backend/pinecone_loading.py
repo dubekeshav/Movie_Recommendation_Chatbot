@@ -1,10 +1,12 @@
+import pandas as pd
+import os
+from sentence_transformers import SentenceTransformer
 import pinecone
 from pinecone import ServerlessSpec, Pinecone
-import os
 import time
 from dotenv import load_dotenv
-import pandas as pd
-from sentence_transformers import SentenceTransformer
+import json
+from io import StringIO
 
 load_dotenv()
 
@@ -18,22 +20,22 @@ pc = Pinecone(api_key=PINECONE_API_KEY)
 
 # Create an index
 index_name = "movies-actors"
-if index_name not in pc.list_indexes().names():  # Corrected index name check
+if index_name not in pc.list_indexes().names():  # Check if index exists
     pc.create_index(
-    name=index_name,
-    vector_type="dense",
-    dimension=384,
-    metric="cosine",
-    spec=ServerlessSpec(
-        cloud="aws",
-        region="us-east-1"
-    ),
-    deletion_protection="disabled",
-    tags={
-        "environment": "development"
-    }
-)
-    while index_name not in pc.list_indexes().names(): #wait until index is created.
+        name=index_name,
+        vector_type="dense",
+        dimension=384,
+        metric="cosine",
+        spec=ServerlessSpec(
+            cloud="aws",
+            region="us-east-1"
+        ),
+        deletion_protection="disabled",
+        tags={
+            "environment": "development"
+        }
+    )
+    while index_name not in pc.list_indexes().names():  # Wait for index creation
         time.sleep(1)
 
 # Connect to the index
@@ -43,32 +45,72 @@ index = pc.Index(index_name)
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # Load movie dataset in chunks
-movie_file = "./constant/movies_combined_wide.tsv"
-reader = pd.read_csv(movie_file, chunksize=100000, sep='\t', low_memory=False) #added seperator and low_memory
+output_directory = "constant"
+absolute_path = os.path.abspath(output_directory)
+movie_file = os.path.join(absolute_path, 'movies_transformed.csv')
 
-for chunk in reader:
-    vectors = []
-    for _, row in chunk.iterrows():
-        try:
-            text_rep = f"{row['primaryTitle']} {row['genres']} {row['actor']} {row['director']} {row['writer']}"
-            vector = model.encode(text_rep).tolist()
-            vectors.append((row["tconst"], vector, {"title": row["primaryTitle"], "genres": row["genres"], "director": row["director"]}))
-        except KeyError:
-            print(f"Skipping row due to missing keys: {row}") #Handle missing keys
+vectorized_data = []# Initialize an empty list to store vectorized data
+total_size = 0
+VECTOR_SIZE = 384 * 4
+exceptions = []
 
-    # Upload vectors in smaller batches
-    batch_size = 100  # Adjust as needed
-    for i in range(0, len(vectors), batch_size):
-        index.upsert(vectors[i:i + batch_size])
+def process_row(row_str, line_num):
+    """Processes a row using pandas logic first, then delimiter counting."""
+    try:
+        # Try pandas logic with quoting
+        row_df = pd.read_csv(StringIO(row_str), sep='^', header=None, quoting=1)  # Use StringIO from io module
+        row = row_df.iloc[0].tolist()
+        return row
+    except pd.errors.ParserError:
+        # Pandas logic failed, use delimiter counting
+        delimiter_count = row_str.count('^')
+        expected_count = 15  # Assuming 16 fields, thus 15 delimiters
+        if delimiter_count == expected_count:
+            row = [field.strip() for field in row_str.split('^')]
+            return row
+        else:
+            exceptions.append(line_num)
+            return None #skip row
 
-print("Movies data uploaded to Pinecone!")
+with open(movie_file, 'r', encoding='utf-8') as f:
+    for line_num, line in enumerate(f, 1):
+        row = process_row(line.strip(), line_num)
+        if row:
+            try:
+                embedding = model.encode(row[2], convert_to_numpy=True).tolist()
+                # Take all metadata
+                metadata = {str(i): v for i, v in enumerate(row)}
+                metadata_size = len(json.dumps(metadata).encode('utf-8'))
+                record_size = VECTOR_SIZE + metadata_size
+                vectorized_data.append((row[0], embedding, metadata))
+                total_size += record_size
+            except Exception as e:
+                exceptions.append(line_num)
 
-query = model.encode("Sci-fi action movie with aliens").tolist()
+print(f"Vectorized data generated. Total size: {total_size / (1024 * 1024):.2f} MB")
+if exceptions:
+    print(f"Exceptions occurred at lines: {exceptions}")
 
-response = index.query(
-    vector=query,
-    top_k=5,  # Retrieve top 5 similar movies
-    include_metadata=True
-)
+def upload_to_pinecone(index, data, max_batch_size=100, max_request_size=2_000_000):
+    batch =[]
+    batch_size = 0
+    vector_count = 0
+    vector_size = 384 * 4
+    for tconst, embedding, metadata in data:
+        metadata_size = len(json.dumps(metadata).encode('utf-8'))
+        record_size = vector_size + metadata_size
+        if vector_count >= max_batch_size or batch_size + record_size > max_request_size:
+            if batch:
+                index.upsert(vectors=batch)
+                batch =[]
+                batch_size = 0
+                vector_count = 0
+        batch.append((tconst, embedding, metadata))
+        batch_size += record_size
+        vector_count += 1
+    if batch:
+        index.upsert(vectors=batch)
+    print("Upload to Pinecone completed successfully!")
 
-print(response)
+print("Uploading vectorized data to Pinecone...")
+upload_to_pinecone(index, vectorized_data)
