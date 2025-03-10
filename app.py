@@ -3,35 +3,28 @@ os.environ["STREAMLIT_SERVER_ENABLE_FILE_WATCHER"] = "false"
 
 import streamlit as st
 import shelve
+import pandas as pd
+import csv
 from dotenv import load_dotenv
-from backend.ModelInitialization import compile_pipeline, init_prompt, init_env_vars, load_documents, split_docs, indexing_documents
+from backend.ModelInitialization import compile_pipeline, init_prompt, init_env_vars, init_llm, prepare_documents_for_splitting, split_document_into_chunks, indexing_documents
 
 st.set_page_config(page_title="Movie Recommendation App", layout="wide")
 
-# st.markdown("""
-#     <style>
-#         .reportview-container {
-#             margin-top: -2em;
-#         }
-#         #MainMenu {visibility: hidden;}
-#         .stDeployButton {display:none;}
-#         footer {visibility: hidden;}
-#         #stDecoration {display:none;}
-#     </style>
-# """, unsafe_allow_html=True)
-
 load_dotenv()
 init_env_vars()
-db = load_documents()
-indexing_documents(split_docs(db))
+llm = init_llm()
 
-# st.title("Movie Recommendation App")
+file_path = "/Users/mohitbhoir/Git/Movie_Recommendation_Chatbot/constant/output_movies_copy.txt"
+df = pd.read_csv(file_path, sep="^", quoting=csv.QUOTE_ALL)
+docs = prepare_documents_for_splitting(df)
+all_splits = split_document_into_chunks(docs)
+indexing_documents(all_splits)
+
+prompt = init_prompt()
+app = compile_pipeline(llm)
 
 USER_AVATAR = '🥷'
 BOT_AVATAR = '🐼'
-
-llm = compile_pipeline()
-prompt = init_prompt()
 
 def load_chat_sessions():
     with shelve.open('./data/movie_chat_sessions.db') as db:
@@ -120,16 +113,13 @@ if prompt := st.chat_input("Ask a Question about Movies"):
     with st.chat_message('user', avatar=USER_AVATAR):
         st.markdown(f"<div style='text-align: left; padding: 10px; border-radius: 5px; margin-left: auto; max-width: 100%;'>{prompt}</div>", unsafe_allow_html=True)
 
+    # Use the compiled pipeline to get the answer with structured context
+    inputs = {"question": prompt, "llm": llm}
+    response = app.invoke(inputs)
+    full_response = response.get("answer", "No answer returned.")
+
     with st.chat_message('bot', avatar=BOT_AVATAR):
-        message_placeholder = st.empty()
-        full_response = ''
-        try:
-            query_response = llm.invoke({'question': prompt, 'context': []})
-            full_response = query_response['answer']
-        except Exception as e:
-            print(str(e))
-            full_response = f'An Error occurred: {e}'
-        message_placeholder.markdown(f"<div style='text-align: left; padding: 10px; border-radius: 5px; max-width: 100%;'>{full_response}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align: left; padding: 10px; border-radius: 5px; max-width: 100%;'>{full_response}</div>", unsafe_allow_html=True)
     messages.append({'role': 'bot', 'content': full_response})
     st.session_state.chat_histories[st.session_state.selected_chat] = messages
     save_chat_history(st.session_state.selected_chat, messages)
