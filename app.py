@@ -8,21 +8,33 @@ from backend.ModelInitialization import compile_pipeline, init_prompt, init_env_
 
 st.set_page_config(page_title="Movie Recommendation App", layout="wide")
 
+# Move the chatbot title to the top-left corner
+st.title("Movies Recommendation Chatbot")
+
 load_dotenv()
 init_env_vars()
 llm = init_llm()
-
-# file_path = "constant\output_movies_copy.txt"
-# df = pd.read_csv(file_path, sep="^", quoting=csv.QUOTE_ALL)
-# docs = prepare_documents_for_splitting(df)
-# all_splits = split_document_into_chunks(docs)
-# indexing_documents(all_splits)
 
 prompt = init_prompt()
 app = compile_pipeline(llm)
 
 USER_AVATAR = '🥷'
 BOT_AVATAR = '🐼'
+
+# Set background image
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background-image:'bg.png';
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 def load_chat_sessions():
     with shelve.open('./data/movie_chat_sessions.db') as db:
@@ -50,11 +62,12 @@ if 'new_chat_name' not in st.session_state:
     st.session_state.new_chat_name = ""
 
 with st.sidebar:
+    st.sidebar.button("☰", key="menu_button")  # Menu icon button
     st.sidebar.subheader("Chat Sessions")
     for chat_name in st.session_state.chat_sessions:
         cols = st.sidebar.columns([0.8, 0.2])
         with cols[0]:
-            if cols[0].button(chat_name, key=f"select_{chat_name}"):
+            if cols[0].button(chat_name, key=f"select_{chat_name}", help="Select this chat session"):
                 st.session_state.selected_chat = chat_name
         with cols[1]:
             if cols[1].button("🗑️", key=f"delete_{chat_name}"):
@@ -72,16 +85,21 @@ with st.sidebar:
                 st.rerun()
 
     st.session_state.new_chat_name = st.text_input("New Chat Name", value=st.session_state.new_chat_name)
-    if st.button("Add Chat"):
-        if st.session_state.new_chat_name and st.session_state.new_chat_name not in st.session_state.chat_sessions:
-            st.session_state.chat_sessions.append(st.session_state.new_chat_name)
-            save_chat_sessions(st.session_state.chat_sessions)
-            st.session_state.selected_chat = st.session_state.new_chat_name
-            st.session_state.new_chat_name = "" #clear the input
-            if st.session_state.new_chat_name in st.session_state.chat_histories:
-                pass
+    with st.form(key='new_chat_form'):
+        if st.form_submit_button("Add Chat"):
+            new_chat_name = st.session_state.new_chat_name or "New Chat"
+            if new_chat_name not in st.session_state.chat_sessions:
+                st.session_state.chat_sessions.append(new_chat_name)
             else:
-                st.session_state.chat_histories[st.session_state.new_chat_name] = []
+                base_name = new_chat_name
+                counter = 1
+                while new_chat_name in st.session_state.chat_sessions:
+                    new_chat_name = f"{base_name}_{counter}"
+                    counter += 1
+                st.session_state.chat_sessions.append(new_chat_name)
+            save_chat_sessions(st.session_state.chat_sessions)
+            st.session_state.selected_chat = new_chat_name
+            st.session_state.new_chat_name = ""  # clear the input immediately
             st.rerun()
 
 if 'chat_histories' not in st.session_state:
