@@ -68,8 +68,16 @@
 import pandas as pd
 import numpy as np
 
+def create_page_content(row):
+    """Creates a more focused page_content with proper genre handling."""
+    title = row['title']
+    genre = row['genres']  # Keep all genres
+    description = row['description']
+    actors = ", ".join(row['actors'].split(", ")[:5])  # Limit to 5 actors
+    return f"Title: {title}. Genres: {genre}. Description: {description}. Actors: {actors}."
+
 def process_data(titles_file_path, credits_file_path, output_file_path):
-    """Processes movie titles and credits data, handling NaN and NA values."""
+    """Processes movie titles and credits data, handling NaN values and improving structure."""
     titles_df = pd.read_csv(titles_file_path)
     credits_df = pd.read_csv(credits_file_path)
 
@@ -94,17 +102,18 @@ def process_data(titles_file_path, credits_file_path, output_file_path):
     # Replace NaN and NA with empty strings
     final_df = final_df.replace({np.nan: '', 'NaN': '', 'NA': '', 'N/A': ''}, regex=False)
 
-    print(final_df.head()) #Print out the first few rows.
+    # Filter out incomplete documents (adjust criteria as needed)
+    final_df = final_df[final_df['title'] != '']
+    final_df = final_df[final_df['genres'] != '']
+    final_df = final_df[final_df['description'] != '']
+    final_df = final_df[final_df['actors'] != '']
 
-    final_df['page_content'] = final_df.apply(
-        lambda row: (
-            f"Title: {row['title']}, Type: {row['type']}, Runtime: {row['runtime']}, "
-            f"Release Year: {row['release_year']}, Genre: {row['genres']}, "
-            f"Actors: {row['actors']}, Characters: {row['characters']}, Actor Roles: {row['actor_roles']}, "
-            f"Description: {row['description']}"
-        ),
-        axis=1
-    )
+    # Limit actor and character lists
+    final_df['actors'] = final_df['actors'].apply(lambda x: ", ".join(x.split(", ")[:5]))
+    final_df['characters'] = final_df['characters'].apply(lambda x: ", ".join(x.split(", ")[:5]))
+
+    # Create focused page_content
+    final_df['page_content'] = final_df.apply(create_page_content, axis=1)
 
     final_df.to_csv(output_file_path, index=False)
 
