@@ -1,5 +1,4 @@
-# Ignore all CSV files in the constant folder
 constant/*.csv
-constant/*.tsv
+constant/*.json
 constant/*.txt
-backend/*_test.py
+constant/*.ipynb
