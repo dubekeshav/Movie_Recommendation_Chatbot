@@ -2,3 +2,4 @@ constant/*.csv
 constant/*.json
 constant/*.txt
 constant/*.ipynb
+constant/*.tsv
