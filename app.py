@@ -3,10 +3,8 @@ os.environ["STREAMLIT_SERVER_ENABLE_FILE_WATCHER"] = "false"
 
 import streamlit as st
 import shelve
-import pandas as pd
-import csv
 from dotenv import load_dotenv
-from backend.ModelInitialization import compile_pipeline, init_prompt, init_env_vars, init_llm, prepare_documents_for_splitting, split_document_into_chunks, indexing_documents
+from backend.ModelInitialization import compile_pipeline, init_prompt, init_env_vars, init_llm
 
 st.set_page_config(page_title="Movie Recommendation App", layout="wide")
 
@@ -14,11 +12,11 @@ load_dotenv()
 init_env_vars()
 llm = init_llm()
 
-file_path = "/Users/mohitbhoir/Git/Movie_Recommendation_Chatbot/constant/output_movies_copy.txt"
-df = pd.read_csv(file_path, sep="^", quoting=csv.QUOTE_ALL)
-docs = prepare_documents_for_splitting(df)
-all_splits = split_document_into_chunks(docs)
-indexing_documents(all_splits)
+# file_path = "constant\output_movies_copy.txt"
+# df = pd.read_csv(file_path, sep="^", quoting=csv.QUOTE_ALL)
+# docs = prepare_documents_for_splitting(df)
+# all_splits = split_document_into_chunks(docs)
+# indexing_documents(all_splits)
 
 prompt = init_prompt()
 app = compile_pipeline(llm)
