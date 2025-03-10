@@ -42,27 +42,6 @@ index = pc.Index(index_name)
 # Load embedding model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Load actors dataset in chunks
-actor_file = "./constant/name.basics.tsv"
-reader = pd.read_csv(actor_file, chunksize=100000, sep='\t', low_memory=False) #added seperator and low_memory
-
-for chunk in reader:
-    vectors = []
-    for _, row in chunk.iterrows():
-        try:
-            text_rep = f"{row['primaryName']} {row['primaryProfession']} {row['knownForTitles']}"
-            vector = model.encode(text_rep).tolist()
-            vectors.append((row["nconst"], vector, {"name": row["primaryName"], "knownFor": row["knownForTitles"]}))
-        except KeyError:
-            print(f"Skipping row due to missing keys: {row}") #Handle missing keys.
-
-    # Upload vectors in smaller batches
-    batch_size = 100  # Adjust based on your dataset size
-    for i in range(0, len(vectors), batch_size):
-        index.upsert(vectors[i:i + batch_size])
-
-print("Actors data uploaded to Pinecone!")
-
 # Load movie dataset in chunks
 movie_file = "./constant/movies_combined_wide.tsv"
 reader = pd.read_csv(movie_file, chunksize=100000, sep='\t', low_memory=False) #added seperator and low_memory

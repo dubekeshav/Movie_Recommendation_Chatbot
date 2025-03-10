@@ -36,7 +36,8 @@ def convert_to_wide_format(df):
         'actress': 'actress',
         'producer': 'producer'
     }, inplace=True)
-
+    del df
+    print("Converted to wide format.")
     return wide_df
 
 def process_principals(output_directory):
@@ -63,34 +64,7 @@ def process_principals(output_directory):
 
 def process_basics_and_ratings(output_directory):
     """Processes title.basics.tsv and title.ratings.tsv, merging and returns combined DataFrame."""
-    os_name = platform.system()
-    gpu_available = False
-    gpu_backend = None
-
-    if os_name == "Windows":
-        try:
-            import cudf
-            gpu_available = True
-            gpu_backend = "cudf"
-            print("Using NVIDIA GPU with cuDF on Windows.")
-        except ImportError:
-            print("NVIDIA GPU not found or cuDF not installed. Using CPU on Windows.")
-    elif os_name == "Darwin":
-        try:
-            import cudf
-            gpu_available = True
-            gpu_backend = "cudf"
-            print("Using Apple Silicon GPU with cuDF on macOS.")
-        except ImportError:
-            print("Apple Silicon GPU not found or cuDF not installed. Using CPU on macOS.")
-    else:
-        print("Unsupported operating system. Using CPU.")
-
-    if gpu_available and gpu_backend == "cudf":
-        import cudf as pd
-    else:
-        import pandas as pd
-
+    
     basics_path = os.path.join(output_directory, "title.basics.tsv")
     ratings_path = os.path.join(output_directory, "title.ratings.tsv")
 
