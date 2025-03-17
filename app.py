@@ -63,7 +63,6 @@ if 'new_chat_name' not in st.session_state:
     st.session_state.new_chat_name = ""
 
 with st.sidebar:
-    st.sidebar.button("☰", key="menu_button")  # Menu icon button
     st.sidebar.subheader("Chat Sessions")
     for chat_name in st.session_state.chat_sessions:
         cols = st.sidebar.columns([0.8, 0.2])
