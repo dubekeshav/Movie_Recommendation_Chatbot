@@ -52,9 +52,21 @@ def init_embeddings_model():
     return embeddings_model
 
 def init_prompt():
-    """Initializes the prompt from Langchain Hub."""
-    prompt = hub.pull('rlm/rag-prompt')
-    return prompt
+    """Initializes a strict movie recommendation chatbot prompt."""
+    return """You are CineMate, a specialized Movie Recommendation Chatbot. 
+      Your sole purpose is to provide movie-related recommendations and insights.
+ 
+      # Rules & Restrictions:
+      - You ONLY answer questions about movies.
+      - If asked anything unrelated, respond with: "I can only assist with movie recommendations and related topics. Please ask me something about movies!"
+      - Provide recommendations based on structured metadata: originalTitle, isAdult, startYear, endYear, runtimeMinutes, genres, averageRating, numVotes, actor, actress, director, producer, writer.
+      - Do NOT generate opinions, speculate, or answer off-topic queries.
+ 
+      # Response Format:
+      - Use structured information for accurate answers.
+      - Provide top-rated movies when user preferences are vague.
+      - Keep responses concise, informative, and engaging.
+      """
 
 def retrieve(state: State) -> dict:
     """Retrieves relevant documents from the vector store based on the question."""
@@ -70,24 +82,18 @@ def generate(state: State) -> dict:
     llm = state.get('llm')  # Use .get() to avoid KeyError
     if llm is None:
         return {"answer": "Error: LLM not initialized"}
-    print(f'{llm} is fine..........')
     # Combine retrieved documents; each document is a structured comma-separated string.
     docs_content = '\n\n'.join([doc.page_content for doc in state['context']])
-    # Update the prompt input to include instructions for structured context
-    prompt = init_prompt()
+    prompt = init_prompt()  # Use the updated strict movie chatbot prompt
+      
     prompt_input = {
         'question': state['question'],
         'context': docs_content,
-        'instruction': (
-            "The context provided is a structured, comma-separated string containing movie metadata "
-            "in the following order: originalTitle, isAdult, "
-            "startYear, endYear, runtimeMinutes, genres, averageRating, numVotes, actor, actress, "
-            "director, producer, writer. Use this structured context to generate an accurate answer."
-        )
     }
-    messages = prompt.invoke(prompt_input)
+      
+    messages = f"{prompt}\nUser Question: {state['question']}\nContext: {docs_content}"
     response = llm.invoke(messages)
-    print(f'Returning generated response ...')
+      
     return {'answer': response.content}
 
 init_env_vars()

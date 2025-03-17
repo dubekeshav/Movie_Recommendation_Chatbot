@@ -72,7 +72,7 @@ with st.sidebar:
         with cols[1]:
             if cols[1].button("🗑️", key=f"delete_{chat_name}"):
                 st.session_state.chat_sessions.remove(chat_name)
-                if chat_name in st.session_state.chat_histories: #Check for key existance
+                if chat_name in st.session_state.chat_histories: 
                     del st.session_state.chat_histories[chat_name]
                 save_chat_sessions(st.session_state.chat_sessions)
                 if os.path.exists(f'./data/movie_chat_history.db'):
