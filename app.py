@@ -9,7 +9,7 @@ from backend.ModelInitialization import compile_pipeline, init_prompt, init_env_
 st.set_page_config(page_title="Movie Recommendation App", layout="wide")
 
 # Move the chatbot title to the top-left corner
-st.title("Movies Recommendation Chatbot")
+st.title("CineMate 🎬")
 
 load_dotenv()
 init_env_vars()
@@ -134,8 +134,44 @@ if prompt := st.chat_input("Ask a Question about Movies"):
     response = app.invoke(inputs)
     full_response = response.get("answer", "No answer returned.")
 
+    # Ensure structured formatting in responses
+    formatted_response = ""
+
+    if isinstance(full_response, dict):  # Check if full_response is a dictionary
+        formatted_response = f"""
+        - **Title:** {full_response.get('title', 'Unknown Title')}
+        - **Year:** {full_response.get('year', 'Unknown')}
+        - **IMDb Rating:** {full_response.get('rating', 'Not Rated')}
+        - **Duration:** {full_response.get('duration', 'Unknown')} min
+        - **Genres:** {', '.join(full_response.get('genres', ['Unknown']))}
+        - **Synopsis:** {full_response.get('synopsis', 'No description available.')}
+        - **Director:** {', '.join(full_response.get('director', ['Unknown']))}
+        - **Writer:** {', '.join(full_response.get('writer', ['Unknown']))}
+        - **Stars:** {', '.join(full_response.get('stars', ['Unknown']))}
+        - **Streaming Availability:** {full_response.get('streaming', 'Not Available')}
+        """
+    elif isinstance(full_response, list):  # Handle multiple recommendations
+        for movie in full_response:
+            if isinstance(movie, dict):  # Ensure each movie is a dictionary
+                formatted_response += f"""
+                - **Title:** {movie.get('title', 'Unknown Title')}
+                - **Year:** {movie.get('year', 'Unknown')}
+                - **IMDb Rating:** {movie.get('rating', 'Not Rated')}
+                - **Duration:** {movie.get('duration', 'Unknown')} min
+                - **Genres:** {', '.join(movie.get('genres', ['Unknown']))}
+                - **Synopsis:** {movie.get('synopsis', 'No description available.')}
+                - **Director:** {', '.join(movie.get('director', ['Unknown']))}
+                - **Writer:** {', '.join(movie.get('writer', ['Unknown']))}
+                - **Stars:** {', '.join(movie.get('stars', ['Unknown']))}
+                - **Streaming Availability:** {movie.get('streaming', 'Not Available')}
+                \n---
+                """
+    else:  # If full_response is a string, return it as-is
+        formatted_response = full_response
+
     with st.chat_message('bot', avatar=BOT_AVATAR):
-        st.markdown(f"<div style='text-align: left; padding: 10px; border-radius: 5px; max-width: 100%;'>{full_response}</div>", unsafe_allow_html=True)
-    messages.append({'role': 'bot', 'content': full_response})
+        st.markdown(f"<div style='text-align: left; padding: 10px; border-radius: 5px; max-width: 100%;'>{formatted_response}</div>", unsafe_allow_html=True)
+
+    messages.append({'role': 'bot', 'content': formatted_response})
     st.session_state.chat_histories[st.session_state.selected_chat] = messages
     save_chat_history(st.session_state.selected_chat, messages)

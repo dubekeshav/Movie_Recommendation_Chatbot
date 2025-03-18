@@ -25,12 +25,11 @@ except ImportError:
 load_dotenv()
 
 # --- Configuration ---
-PINECONE_API_KEY = os.getenv('PINECONE_API_KEY2')
-PINECONE_API_KEY = "pcsk_2mh5kr_AdiVPKgc8DrhdkL7gaGzJbFdGqKPkRuvkgzXP3xkBdYaX5DCsgPYJriSfyriJwB"
-INDEX_NAME = "movies"
+PINECONE_API_KEY = os.getenv('PINECONE_API_KEY2')  # Update with your Pinecone API key
+INDEX_NAME = "movies" # Pinecone index name
 CSV_FILE = "constant/merged_tconst.csv"  # Change to your actual file path
 PINECONE_ENV = "us-east-1-aws"  # Updated to match your Pinecone environment
-BATCH_SIZE = 5000  # Pinecone batch size
+BATCH_SIZE = 1000  # Pinecone batch size
 EMBEDDING_DIMENSION = 384  # Fixed dimension for MiniLM-L6-v2
 
 
@@ -175,6 +174,21 @@ def main():
         print(f"❌ Critical Error: {e}")
         traceback.print_exc()
         exit(1)
+
+def get_vector_store():
+    """Returns the Pinecone vector store."""
+    logging.info("Initializing Pinecone vector store.")
+
+    # ✅ Use HuggingFaceEmbeddings for LangChain compatibility
+    embeddings_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+    # ✅ Ensure Pinecone index is initialized
+    pinecone_index = init_pinecone()
+
+    # ✅ Check if the text_key is correct (use 'description' if your Pinecone stores descriptions)
+    vector_store = PineconeVectorStore(index=pinecone_index, embedding=embeddings_model, text_key="description")
+
+    return vector_store
 
 if __name__ == "__main__":
     main()

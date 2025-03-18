@@ -91,7 +91,7 @@ def retrieve(state: State) -> dict:
     print(f'Retrieving...........')
     vector_store = get_vector_store()
     print(f'Initialized vector store...')
-    retrieved_docs = vector_store.similarity_search(state['question'], k=5)
+    retrieved_docs = vector_store.similarity_search_with_score(state['question'], k=5)
     print(f'Retrieved documents: {retrieved_docs}')
     return {'context': retrieved_docs, 'llm': state['llm']}  # Ensure LLM is passed
 
@@ -104,12 +104,26 @@ def generate(state: State) -> dict:
     if len(state['question']) > 500:  # Adjust limit as needed
         return {"answer": "Your input is too long. Please ask a concise question."}
 
-    if "previous_responses" in state:
-        del state["previous_responses"]  # Prevent step-by-step exploits
+    # Maintain a response history within the state
+    if "response_history" not in state:
+        state["response_history"] = []  # Initialize if not present
 
-    # Combine retrieved documents; each document is a structured comma-separated string.
-    docs_content = '\n\n'.join([doc.page_content for doc in state['context']])
-    prompt = init_prompt()  # Use the updated strict movie chatbot prompt
+    # Format movie details in a structured response
+    docs_content = '\n\n'.join([
+        f"**Title:** {doc[0].metadata.get('originalTitle', 'Unknown Title')}\n"
+        f"**Year:** {doc[0].metadata.get('startYear', 'Unknown')}\n"
+        f"**IMDb Rating:** {doc[0].metadata.get('averageRating', 'Not Rated')}\n"
+        f"**Duration:** {doc[0].metadata.get('runtimeMinutes', 'Unknown')} min\n"
+        f"**Genres:** {doc[0].metadata.get('genres', 'Unknown')}\n\n"
+        f"**Synopsis:** {doc[0].metadata.get('description', 'No description available.')}\n"
+        f"**Director:** {doc[0].metadata.get('director', 'Unknown')}\n"
+        f"**Writer:** {doc[0].metadata.get('writer', 'Unknown')}\n"
+        f"**Stars:** {doc[0].metadata.get('actor', 'Unknown')}\n"
+        #f"**Streaming Availability:** {doc[0].metadata.get('streaming', 'Not Available')}"
+        for doc in state['context']
+    ])
+
+    prompt = init_prompt()
 
     # Check for exploitation attempts
     user_input = normalize_input(state['question'])
@@ -142,9 +156,18 @@ def generate(state: State) -> dict:
     }
 
     messages = f"{prompt}\nUser Question: {state['question']}\nContext: {docs_content}"
-    response = llm.invoke(messages)
+    response = llm.invoke(messages).content
 
-    return {'answer': response.content}
+    # Check for response loops or repetition in history
+    if response in state["response_history"]:
+        return {"answer": "I've already provided this answer. Can you rephrase your question?"}
+
+    # Maintain a limited response history (store only the last 3 responses)
+    state["response_history"].append(response)
+    if len(state["response_history"]) > 3:  # Keep only the last 3 responses
+        state["response_history"].pop(0)
+
+    return {'answer': response}
 
 init_env_vars()
 llm = init_llm() # Initialize llm here
