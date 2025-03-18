@@ -3,4 +3,5 @@ constant/*.json
 constant/*.txt
 constant/*.ipynb
 constant/*.tsv
-.env
+*.env
+

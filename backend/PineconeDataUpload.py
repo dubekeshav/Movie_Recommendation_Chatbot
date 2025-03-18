@@ -30,69 +30,71 @@ PINECONE_API_KEY = "pcsk_2mh5kr_AdiVPKgc8DrhdkL7gaGzJbFdGqKPkRuvkgzXP3xkBdYaX5DC
 INDEX_NAME = "movies"
 CSV_FILE = "constant/merged_tconst.csv"  # Change to your actual file path
 PINECONE_ENV = "us-east-1-aws"  # Updated to match your Pinecone environment
-BATCH_SIZE = 500  # Pinecone batch size
+BATCH_SIZE = 5000  # Pinecone batch size
 EMBEDDING_DIMENSION = 384  # Fixed dimension for MiniLM-L6-v2
 
 
 
-# ---- Initialize Pinecone (New API) ----
+# ---- Initialize Pinecone ----
 def init_pinecone():
     """Initialize Pinecone and create index if it doesn’t exist."""
     try:
         pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-
-        # Check if index exists
-        existing_indexes = pc.list_indexes().names()
-        if INDEX_NAME not in existing_indexes:
-            pc.create_index(
-                name=INDEX_NAME,
-                dimension=EMBEDDING_DIMENSION,
-                metric="cosine",
-                spec=pinecone.ServerlessSpec(cloud="aws", region="us-east-1")  # Adjust to your AWS region
-            )
-            print(f"Created Pinecone index: {INDEX_NAME} with {EMBEDDING_DIMENSION} dimensions")
-
         return pc.Index(INDEX_NAME)
-
     except Exception as e:
         print(f"❌ Error initializing Pinecone: {e}")
         traceback.print_exc()
-        exit(1)  # Stop script if Pinecone fails to initialize
+        exit(1)
 
-# ---- Load Embedding Model ----
-def load_embedding_model():
-    """Load sentence-transformers model with fixed embedding dimension, with error handling."""
+# ---- Get Existing IDs from Pinecone ----
+def get_existing_ids(index):
+    """Fetch existing tconst IDs from Pinecone to avoid duplicates."""
+    existing_ids = set()
     try:
-        model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-        if model.get_sentence_embedding_dimension() != EMBEDDING_DIMENSION:
-            raise ValueError(f"Model dimension mismatch! Expected {EMBEDDING_DIMENSION}, but got {model.get_sentence_embedding_dimension()}")
-        return model
-    except Exception as e:
-        print(f"❌ Error loading embedding model: {e}")
-        traceback.print_exc()
-        exit(1)  # Stop script if embedding model fails
+        # Fetch all IDs in batches
+        query_response = index.describe_index_stats()
+        total_vectors = query_response['total_vector_count']
+        print(f"📌 Found {total_vectors} existing vectors in Pinecone.")
 
-# ---- Preprocess Metadata (Fixing `None` Values) ----
+        if total_vectors > 0:
+            # Fetch in batches
+            limit = 10_000  # Pinecone can handle batch queries up to 10K
+            for i in range(0, total_vectors, limit):
+                results = index.query(vector=[0.0] * EMBEDDING_DIMENSION, top_k=limit, include_metadata=False)
+                existing_ids.update([match['id'] for match in results['matches']])
+                
+        print(f"✅ Retrieved {len(existing_ids)} existing IDs from Pinecone.")
+    except Exception as e:
+        print(f"⚠️ Error fetching existing IDs from Pinecone: {e}")
+        traceback.print_exc()
+    
+    return existing_ids
+
+# ---- Preprocess Metadata ----
+# ---- Preprocess Metadata (Fixing `NaN` and `float to int` Conversion) ----
 def preprocess_metadata(row):
     """Convert metadata fields to appropriate types and handle missing values."""
     try:
         return {
-            "tconst": row["tconst"],
-            "primaryTitle": row["primaryTitle"],
-            "originalTitle": row["originalTitle"],
-            "isAdult": bool(row["isAdult"]),
-            "startYear": int(row["startYear"]) if pd.notna(row["startYear"]) else 0,  # Default to 0
-            "endYear": int(row["endYear"]) if pd.notna(row["endYear"]) else 0,
-            "runtimeMinutes": int(row["runtimeMinutes"]) if pd.notna(row["runtimeMinutes"]) else 0,
+            "tconst": str(row["tconst"]) if pd.notna(row["tconst"]) else "Unknown",
+            "primaryTitle": str(row["primaryTitle"]) if pd.notna(row["primaryTitle"]) else "Unknown",
+            "originalTitle": str(row["originalTitle"]) if pd.notna(row["originalTitle"]) else "Unknown",
+            "isAdult": bool(row["isAdult"]) if pd.notna(row["isAdult"]) else False,
+
+            # ✅ Fix: Convert possible float strings like '2019.0' to integers
+            "startYear": int(float(row["startYear"])) if pd.notna(row["startYear"]) else 0,
+            "endYear": int(float(row["endYear"])) if pd.notna(row["endYear"]) else 0,
+            "runtimeMinutes": int(float(row["runtimeMinutes"])) if pd.notna(row["runtimeMinutes"]) else 0,
+            "numVotes": int(float(row["numVotes"])) if pd.notna(row["numVotes"]) else 0,
+
             "genres": row["genres"].split(",") if pd.notna(row["genres"]) else ["Unknown"],
-            "averageRating": float(row["averageRating"]) if pd.notna(row["averageRating"]) else 0.0,  # Default to 0.0
-            "numVotes": int(row["numVotes"]) if pd.notna(row["numVotes"]) else 0,  # Default to 0
+            "averageRating": float(row["averageRating"]) if pd.notna(row["averageRating"]) else 0.0,
             "actor": row["actor"].split(",") if pd.notna(row["actor"]) else ["Unknown"],
             "actress": row["actress"].split(",") if pd.notna(row["actress"]) else ["Unknown"],
             "director": row["director"].split(",") if pd.notna(row["director"]) else ["Unknown"],
             "producer": row["producer"].split(",") if pd.notna(row["producer"]) else ["Unknown"],
             "writer": row["writer"].split(",") if pd.notna(row["writer"]) else ["Unknown"],
-            "description": row["description"] if pd.notna(row["description"]) else "No description available."
+            "description": str(row["description"]) if pd.notna(row["description"]) else "No description available."
         }
     except Exception as e:
         print(f"⚠️ Error processing metadata for row {row.get('tconst', 'UNKNOWN')}: {e}")
@@ -101,42 +103,33 @@ def preprocess_metadata(row):
 
 # ---- Generate Embeddings ----
 def generate_embedding(model, text):
-    """Generate a sentence embedding using the specified model, with error handling."""
-    try:
-        vector = model.encode(text).tolist()
-        
-        # Ensure embedding is always 384 dimensions
-        if len(vector) != EMBEDDING_DIMENSION:
-            raise ValueError(f"Embedding dimension mismatch! Expected {EMBEDDING_DIMENSION}, but got {len(vector)}")
-        
-        return vector
-    except Exception as e:
-        print(f"⚠️ Error generating embedding for text: '{text[:50]}...' - {e}")
-        traceback.print_exc()
-        return None  # Skip this embedding
+    """Generate a sentence embedding using the specified model."""
+    vector = model.encode(text).tolist()
+    if len(vector) != EMBEDDING_DIMENSION:
+        raise ValueError(f"Embedding dimension mismatch! Expected {EMBEDDING_DIMENSION}, but got {len(vector)}")
+    return vector
 
 # ---- Upload Data to Pinecone ----
-def upload_to_pinecone(df, index, model):
-    """Process and upload data to Pinecone in batches, with error handling."""
+def upload_to_pinecone(df, index, model, existing_ids):
+    """Only upload new data that is not already in Pinecone."""
     vectors_to_upsert = []
     skipped_rows = 0
+    new_records = 0
 
-    print("Processing and uploading data to Pinecone...")
+    print("🚀 Processing and uploading new data to Pinecone...")
     for _, row in tqdm(df.iterrows(), total=len(df)):
         metadata = preprocess_metadata(row)
-        if metadata is None:
+        if metadata["tconst"] in existing_ids:
             skipped_rows += 1
-            continue  # Skip if metadata processing failed
+            continue  # Skip already uploaded IDs
 
-        # Use description for embedding, fallback to title + year if empty
+        # Generate embedding
         text_to_embed = metadata["description"] if metadata["description"] else f"{metadata['primaryTitle']} ({metadata['startYear']})"
         vector = generate_embedding(model, text_to_embed)
-        if vector is None:
-            skipped_rows += 1
-            continue  # Skip if embedding generation failed
 
-        # Add to batch
+        # Prepare for upload
         vectors_to_upsert.append({"id": metadata["tconst"], "values": vector, "metadata": metadata})
+        new_records += 1
 
         # Upload in batches
         if len(vectors_to_upsert) >= BATCH_SIZE:
@@ -156,29 +149,32 @@ def upload_to_pinecone(df, index, model):
             print(f"❌ Error uploading final batch to Pinecone: {e}")
             traceback.print_exc()
 
-    print(f"✅ Data successfully uploaded to Pinecone with {EMBEDDING_DIMENSION} dimensions!")
-    print(f"⚠️ Skipped {skipped_rows} rows due to errors.")
+    print(f"✅ Successfully uploaded {new_records} new records to Pinecone!")
+    print(f"⚠️ Skipped {skipped_rows} already existing records.")
 
 # ---- Main Execution ----
 def main():
     """Main function to run the pipeline."""
     try:
         index = init_pinecone()
-        model = load_embedding_model()
+        model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-        print(f"Using embedding model with {EMBEDDING_DIMENSION} dimensions.")
+        print(f"📌 Using embedding model with {EMBEDDING_DIMENSION} dimensions.")
+
+        # Load existing IDs from Pinecone
+        existing_ids = get_existing_ids(index)
 
         # Load Data
-        df = pd.read_csv(CSV_FILE, na_values=["\\N"], low_memory=False)  # Fix DtypeWarning
-        print(f"Loaded {len(df)} movies from {CSV_FILE}.")
+        df = pd.read_csv(CSV_FILE, na_values=["\\N"], dtype=str, low_memory=False)
+        print(f"📂 Loaded {len(df)} movies from {CSV_FILE}.")
 
-        # Process and upload to Pinecone
-        upload_to_pinecone(df, index, model)
+        # Process and upload new data only
+        upload_to_pinecone(df, index, model, existing_ids)
 
     except Exception as e:
         print(f"❌ Critical Error: {e}")
         traceback.print_exc()
-        exit(1)  # Stop script if an unexpected error occurs
+        exit(1)
 
 if __name__ == "__main__":
     main()
