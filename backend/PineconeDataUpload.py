@@ -7,7 +7,12 @@ import pinecone
 import pandas as pd
 from dotenv import load_dotenv
 import logging
-from pinecone import Pinecone
+import pinecone
+import pandas as pd
+import time
+import traceback
+from tqdm import tqdm
+from sentence_transformers import SentenceTransformer
 
 # Ensure sentence-transformers is installed
 try:
@@ -20,140 +25,160 @@ except ImportError:
 load_dotenv()
 
 # --- Configuration ---
-PINECONE_API_KEY = os.getenv('PINECONE_API_KEY')
-PINECONE_INDEX_NAME = "movies-actors"
-PINECONE_VECTOR_DIMENSION = 384
-PINECONE_BATCH_SIZE = 100
-USE_HUGGINGFACE_EMBEDDINGS = True  # Change to False to use Pinecone embeddings
-INPUT_CSV_FILE_PATH = "/Users/mohitbhoir/Git/Movie_Recommendation_Chatbot/constant/first_5000_movies.csv"
+PINECONE_API_KEY = os.getenv('PINECONE_API_KEY2')
+PINECONE_API_KEY = "pcsk_2mh5kr_AdiVPKgc8DrhdkL7gaGzJbFdGqKPkRuvkgzXP3xkBdYaX5DCsgPYJriSfyriJwB"
+INDEX_NAME = "movies"
+CSV_FILE = "constant/merged_tconst.csv"  # Change to your actual file path
+PINECONE_ENV = "us-east-1-aws"  # Updated to match your Pinecone environment
+BATCH_SIZE = 500  # Pinecone batch size
+EMBEDDING_DIMENSION = 384  # Fixed dimension for MiniLM-L6-v2
 
-# --- Logging Setup ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- Pinecone Initialization ---
-pinecone_client = None
 
-def init_pinecone(api_key: str, index_name: str, dimension: int):
-    """Initializes Pinecone with proper error handling using the new API."""
-    global pinecone_client
-    if pinecone_client is None:
-        logging.info("Initializing Pinecone client.")
-        try:
-            pinecone_client = Pinecone(api_key=api_key)
-        except Exception as e:
-            logging.error(f"Failed to initialize Pinecone: {e}")
-            raise
-
-    index_list = pinecone_client.list_indexes().names()
-    
-    if index_name in index_list:
-        logging.info(f"Initializing existing Pinecone index: {index_name}")
-        return pinecone_client.Index(index_name)
-    else:
-        logging.error(f"Index {index_name} does not exist. Please create it manually before running this script.")
-        raise ValueError(f"Index {index_name} does not exist.")
-
-def init_embeddings_model():
-    """Initializes either HuggingFace or Pinecone embeddings model."""
-    if USE_HUGGINGFACE_EMBEDDINGS:
-        logging.info("Using HuggingFace embeddings model.")
-        return HuggingFaceEmbeddings(model_name='all-MiniLM-L6-v2')
-    else:
-        logging.info("Using Pinecone built-in embeddings model.")
-        return None  # Pinecone supports upserting raw text, embedding on their servers
-
-def init_pinecone_vector_store(api_key: str, index_name: str, dimension: int):
-    """Initializes the Pinecone vector store."""
-    logging.info("Initializing Pinecone vector store.")
-    embeddings_model = init_embeddings_model()
-    pinecone_index = init_pinecone(api_key, index_name, dimension)
-    vector_store = PineconeVectorStore(index=pinecone_index, embedding=embeddings_model, text_key="page_content")
-    return vector_store
-
-def indexing_documents_pinecone(all_splits: List[Document], api_key: str, index_name: str, dimension: int, batch_size: int = 500):
-    """Indexes document splits into the Pinecone vector store in smaller batches, respecting free-tier limits."""
-    logging.info("Starting Pinecone indexing.")
-    pinecone_index = init_pinecone(api_key, index_name, dimension)  # Pass dimension
-    embeddings_model = init_embeddings_model()
-
-    total_batches = (len(all_splits) // batch_size) + (1 if len(all_splits) % batch_size else 0)
-    
-    for i in range(0, len(all_splits), batch_size):
-        batch = all_splits[i:i + batch_size]
-        if not batch:
-            logging.warning(f"Skipping empty batch {i // batch_size + 1}/{total_batches}")
-            continue
-
-        try:
-            contents = [doc.page_content for doc in batch]
-            embeddings = embeddings_model.embed_documents(contents)
-
-            vectors = [
-                (str(doc.metadata["tconst"]), embedding, doc.metadata)
-                for doc, embedding in zip(batch, embeddings)
-            ]
-            if vectors:
-                pinecone_index.upsert(vectors=vectors)
-                logging.info(f"Inserted batch {i // batch_size + 1}/{total_batches} ({len(batch)} documents)")
-            else:
-                logging.warning(f"Skipping batch {i // batch_size + 1} due to missing vectors.")
-        except Exception as e:
-            logging.error(f"Error inserting batch {i // batch_size + 1}: {e}")
-            logging.exception(e)
-
-    logging.info("Indexing completed successfully.")
-
-def load_documents_from_csv(file_path: str) -> List[Document]:
-    """Loads documents from the processed CSV file with NaN handling."""
-    logging.info(f"Loading documents from {file_path}.")
-    df = pd.read_csv(file_path)
-
-    # Handle missing columns gracefully
-    required_columns = {"primaryTitle", "startYear", "genres", "tconst"}
-    missing_cols = required_columns - set(df.columns)
-    if missing_cols:
-        raise ValueError(f"Missing required columns in CSV: {missing_cols}")
-
-    # Replace NaN values with appropriate defaults
-    df.fillna({"primaryTitle": "Unknown Title", "startYear": "Unknown Year", "genres": "Unknown Genre"}, inplace=True)
-    df.fillna("", inplace=True)  # Replace remaining NaNs with empty string
-
-    documents = []
-    for _, row in df.iterrows():
-        metadata = {col: str(row[col]) if pd.notna(row[col]) else "N/A" for col in df.columns if col != "page_content"}
-        metadata["tconst"] = str(row["tconst"])  # Ensure it's a string
-        page_content = f"{metadata['primaryTitle']} ({metadata['startYear']}) - {metadata['genres']}"
-
-        documents.append(Document(page_content=page_content, metadata=metadata))
-
-    logging.info(f"Loaded {len(documents)} documents from CSV with NaN handling.")
-    return documents
-
-def upload_data_to_pinecone():
-    """Loads processed data and uploads to Pinecone in batches."""
-    if not PINECONE_API_KEY:
-        logging.error("Pinecone API key not set.")
-        return
-
-    documents = load_documents_from_csv(INPUT_CSV_FILE_PATH)
-    logging.info(f"Total documents loaded: {len(documents)}")
-    
-    if not documents:
-        logging.error("No valid documents found. Exiting upload process.")
-        return
-
+# ---- Initialize Pinecone (New API) ----
+def init_pinecone():
+    """Initialize Pinecone and create index if it doesn’t exist."""
     try:
-        indexing_documents_pinecone(documents, PINECONE_API_KEY, PINECONE_INDEX_NAME, PINECONE_BATCH_SIZE)
-    except Exception as e:
-        logging.error(f"Error during indexing: {e}", exc_info=True)
+        pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 
-def get_vector_store():
-    """Returns the Pinecone vector store."""
-    logging.info("Initializing Pinecone vector store.")
-    embeddings_model = init_embeddings_model()
-    pinecone_index = init_pinecone(PINECONE_API_KEY, PINECONE_INDEX_NAME, PINECONE_VECTOR_DIMENSION)  # Pass dimension
-    vector_store = PineconeVectorStore(index=pinecone_index, embedding=embeddings_model, text_key="page_content")
-    return vector_store
+        # Check if index exists
+        existing_indexes = pc.list_indexes().names()
+        if INDEX_NAME not in existing_indexes:
+            pc.create_index(
+                name=INDEX_NAME,
+                dimension=EMBEDDING_DIMENSION,
+                metric="cosine",
+                spec=pinecone.ServerlessSpec(cloud="aws", region="us-east-1")  # Adjust to your AWS region
+            )
+            print(f"Created Pinecone index: {INDEX_NAME} with {EMBEDDING_DIMENSION} dimensions")
+
+        return pc.Index(INDEX_NAME)
+
+    except Exception as e:
+        print(f"❌ Error initializing Pinecone: {e}")
+        traceback.print_exc()
+        exit(1)  # Stop script if Pinecone fails to initialize
+
+# ---- Load Embedding Model ----
+def load_embedding_model():
+    """Load sentence-transformers model with fixed embedding dimension, with error handling."""
+    try:
+        model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+        if model.get_sentence_embedding_dimension() != EMBEDDING_DIMENSION:
+            raise ValueError(f"Model dimension mismatch! Expected {EMBEDDING_DIMENSION}, but got {model.get_sentence_embedding_dimension()}")
+        return model
+    except Exception as e:
+        print(f"❌ Error loading embedding model: {e}")
+        traceback.print_exc()
+        exit(1)  # Stop script if embedding model fails
+
+# ---- Preprocess Metadata (Fixing `None` Values) ----
+def preprocess_metadata(row):
+    """Convert metadata fields to appropriate types and handle missing values."""
+    try:
+        return {
+            "tconst": row["tconst"],
+            "primaryTitle": row["primaryTitle"],
+            "originalTitle": row["originalTitle"],
+            "isAdult": bool(row["isAdult"]),
+            "startYear": int(row["startYear"]) if pd.notna(row["startYear"]) else 0,  # Default to 0
+            "endYear": int(row["endYear"]) if pd.notna(row["endYear"]) else 0,
+            "runtimeMinutes": int(row["runtimeMinutes"]) if pd.notna(row["runtimeMinutes"]) else 0,
+            "genres": row["genres"].split(",") if pd.notna(row["genres"]) else ["Unknown"],
+            "averageRating": float(row["averageRating"]) if pd.notna(row["averageRating"]) else 0.0,  # Default to 0.0
+            "numVotes": int(row["numVotes"]) if pd.notna(row["numVotes"]) else 0,  # Default to 0
+            "actor": row["actor"].split(",") if pd.notna(row["actor"]) else ["Unknown"],
+            "actress": row["actress"].split(",") if pd.notna(row["actress"]) else ["Unknown"],
+            "director": row["director"].split(",") if pd.notna(row["director"]) else ["Unknown"],
+            "producer": row["producer"].split(",") if pd.notna(row["producer"]) else ["Unknown"],
+            "writer": row["writer"].split(",") if pd.notna(row["writer"]) else ["Unknown"],
+            "description": row["description"] if pd.notna(row["description"]) else "No description available."
+        }
+    except Exception as e:
+        print(f"⚠️ Error processing metadata for row {row.get('tconst', 'UNKNOWN')}: {e}")
+        traceback.print_exc()
+        return None  # Skip this row if metadata processing fails
+
+# ---- Generate Embeddings ----
+def generate_embedding(model, text):
+    """Generate a sentence embedding using the specified model, with error handling."""
+    try:
+        vector = model.encode(text).tolist()
+        
+        # Ensure embedding is always 384 dimensions
+        if len(vector) != EMBEDDING_DIMENSION:
+            raise ValueError(f"Embedding dimension mismatch! Expected {EMBEDDING_DIMENSION}, but got {len(vector)}")
+        
+        return vector
+    except Exception as e:
+        print(f"⚠️ Error generating embedding for text: '{text[:50]}...' - {e}")
+        traceback.print_exc()
+        return None  # Skip this embedding
+
+# ---- Upload Data to Pinecone ----
+def upload_to_pinecone(df, index, model):
+    """Process and upload data to Pinecone in batches, with error handling."""
+    vectors_to_upsert = []
+    skipped_rows = 0
+
+    print("Processing and uploading data to Pinecone...")
+    for _, row in tqdm(df.iterrows(), total=len(df)):
+        metadata = preprocess_metadata(row)
+        if metadata is None:
+            skipped_rows += 1
+            continue  # Skip if metadata processing failed
+
+        # Use description for embedding, fallback to title + year if empty
+        text_to_embed = metadata["description"] if metadata["description"] else f"{metadata['primaryTitle']} ({metadata['startYear']})"
+        vector = generate_embedding(model, text_to_embed)
+        if vector is None:
+            skipped_rows += 1
+            continue  # Skip if embedding generation failed
+
+        # Add to batch
+        vectors_to_upsert.append({"id": metadata["tconst"], "values": vector, "metadata": metadata})
+
+        # Upload in batches
+        if len(vectors_to_upsert) >= BATCH_SIZE:
+            try:
+                index.upsert(vectors=vectors_to_upsert)
+                vectors_to_upsert = []  # Clear batch
+                time.sleep(1)  # Prevent rate limits
+            except Exception as e:
+                print(f"❌ Error uploading batch to Pinecone: {e}")
+                traceback.print_exc()
+
+    # Upload remaining records
+    if vectors_to_upsert:
+        try:
+            index.upsert(vectors=vectors_to_upsert)
+        except Exception as e:
+            print(f"❌ Error uploading final batch to Pinecone: {e}")
+            traceback.print_exc()
+
+    print(f"✅ Data successfully uploaded to Pinecone with {EMBEDDING_DIMENSION} dimensions!")
+    print(f"⚠️ Skipped {skipped_rows} rows due to errors.")
+
+# ---- Main Execution ----
+def main():
+    """Main function to run the pipeline."""
+    try:
+        index = init_pinecone()
+        model = load_embedding_model()
+
+        print(f"Using embedding model with {EMBEDDING_DIMENSION} dimensions.")
+
+        # Load Data
+        df = pd.read_csv(CSV_FILE, na_values=["\\N"], low_memory=False)  # Fix DtypeWarning
+        print(f"Loaded {len(df)} movies from {CSV_FILE}.")
+
+        # Process and upload to Pinecone
+        upload_to_pinecone(df, index, model)
+
+    except Exception as e:
+        print(f"❌ Critical Error: {e}")
+        traceback.print_exc()
+        exit(1)  # Stop script if an unexpected error occurs
 
 if __name__ == "__main__":
-    upload_data_to_pinecone()
+    main()
