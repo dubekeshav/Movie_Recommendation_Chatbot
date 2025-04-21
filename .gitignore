@@ -1,5 +1,7 @@
-constant/*.csv
+*.csv
 constant/*.json
 constant/*.txt
 constant/*.ipynb
 constant/*.tsv
+*.env
+
