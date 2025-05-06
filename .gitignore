@@ -4,4 +4,11 @@ constant/*.txt
 constant/*.ipynb
 constant/*.tsv
 *.env
-
+venv/
+research/
+venv
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

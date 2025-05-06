@@ -3,7 +3,6 @@ python-dotenv
 langchain-text-splitters
 langchain-community
 langgraph
-langchain[groq]
 langchain
 langchain-huggingface
 langchain-core
@@ -11,3 +10,13 @@ langchain-chroma
 langchain-pinecone
 bs4
 chromadb
+pinecone-client>=3.0.0
+groq
+requests
+pandas
+numpy
+ipykernel
+tqdm
+matplotlib
+seaborn
+jupyter
